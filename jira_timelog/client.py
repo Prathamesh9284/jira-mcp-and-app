@@ -239,9 +239,14 @@ class JiraClient:
             })
         return out
 
-    async def list_epics(self, project_key: str) -> list[dict]:
-        return await self._search_summaries(
-            f"project = {project_key} AND issuetype = Epic ORDER BY created DESC")
+    async def list_epics(self, project_key: str, open_only: bool = False, mine: bool = False) -> list[dict]:
+        jql = f"project = {project_key} AND issuetype = Epic"
+        if open_only:
+            jql += " AND statusCategory != Done"
+        if mine:
+            jql += " AND assignee = currentUser()"
+        jql += " ORDER BY created DESC"
+        return await self._search_summaries(jql)
 
     async def list_stories(self, epic_key: str) -> list[dict]:
         return await self._search_summaries(
