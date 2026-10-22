@@ -1,0 +1,10 @@
+streamlit>=1.30
+langchain-groq>=0.2
+langchain-ollama>=0.3
+ddgs>=9.0
+wordfreq>=3.0
+fastapi>=0.135
+uvicorn[standard]>=0.42
+httpx>=0.28
+python-dateutil>=2.9
+mcp>=1.9

@@ -1,0 +1,15 @@
+{
+  "enabledPlugins": {
+    "superpowers@superpowers-dev": true
+  },
+  "permissions": {
+    "deny": [
+      "Read(.envs)",
+      "Edit(.envs)",
+      "Write(.envs)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)"
+    ]
+  }
+}

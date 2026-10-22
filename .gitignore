@@ -1,0 +1,40 @@
+# env
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# data dirs
+worklogs/
+repo_context/
+
+# node
+frontend/node_modules/
+frontend/.next/
+
+# streamlit
+.streamlit/secrets.toml
+
+# editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# os
+.DS_Store
+Thumbs.db
+
+# misc
+temp.md
+=0.3
+requests.json
