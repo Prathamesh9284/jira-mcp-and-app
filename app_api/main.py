@@ -216,11 +216,16 @@ async def transition_issue_(issue_key: str, body: dict, request: Request):
     target = (body.get("status") or "").strip()
     if not target:
         raise HTTPException(400, "status is required")
+    via = body.get("via") or []
+    if isinstance(via, str):
+        via = [s for s in via.split(",")]
     try:
-        await _jira(request).transition_to(issue_key, target)
+        applied = await _jira(request).transition_via(issue_key, target, via)
     except JiraError as e:
-        raise HTTPException(502, e.message) from None
-    return {"key": issue_key, "status": target}
+        # 409 = workflow has no such transition from the current status (message lists the
+        # available ones); anything else is a real upstream Jira failure.
+        raise HTTPException(409 if e.status == 409 else 502, e.message) from None
+    return {"key": issue_key, "status": target, "path": applied}
 
 
 @app.get("/subtasks")

@@ -467,7 +467,27 @@ class JiraClient:
                                     {"transition": {"id": t["id"]}})
                 return
         avail = ", ".join(f'{t["name"]}->{t.get("to", {}).get("name", "?")}' for t in transitions)
-        raise JiraError(0, f'No transition to "{target_name}" on {issue_key}. Available: {avail}')
+        raise JiraError(409, f'No transition to "{target_name}" on {issue_key}. Available: {avail}')
+
+    async def current_status(self, issue_key: str) -> str:
+        """Lower-cased name of the issue's current status."""
+        data = await self._request("GET", f"/rest/api/3/issue/{issue_key}?fields=status")
+        return data.get("fields", {}).get("status", {}).get("name", "").strip().lower()
+
+    async def transition_via(self, issue_key: str, target_name: str, via: list[str]) -> list[str]:
+        """Move an issue to target_name through intermediate statuses, e.g. via=['QA Handover']
+        then 'CLOSED' (bug workflows don't allow 'Development in Progress' -> CLOSED directly).
+        Does nothing if the issue is already in target_name; skips a hop the issue already sits in.
+        Returns the statuses actually applied, in order."""
+        if await self.current_status(issue_key) == target_name.strip().lower():
+            return []
+        applied = []
+        for step in [s.strip() for s in via if s.strip()] + [target_name]:
+            if await self.current_status(issue_key) == step.lower():
+                continue
+            await self.transition_to(issue_key, step)
+            applied.append(step)
+        return applied
 
     async def list_link_types(self) -> list[dict]:
         data = await self._request("GET", "/rest/api/3/issueLinkType")

@@ -370,15 +370,31 @@ async def jira_change_issue_type(issue_key: str, issue_type: str, project: str =
 
 
 @mcp.tool()
-async def jira_transition_issue(issue_key: str, status: str) -> str:
+async def jira_transition_issue(issue_key: str, status: str, via: str = "") -> str:
     """Change the status of any Jira issue.
 
     Args:
         issue_key: e.g. WAR-123.
-        status: Target status name (e.g. 'In Progress', 'Done', 'In Review').
+        status: Target status name (e.g. 'In Progress', 'Closed', 'CLOSED').
+        via: Optional comma-separated intermediate statuses to pass through first, in order.
+             WAR bugs can't go 'Development in Progress' -> CLOSED directly: use
+             status='CLOSED', via='QA Handover'. If a move isn't allowed, the error lists
+             the transitions available from the current status.
     """
-    data = await _post(f"/issues/{issue_key}/transition", {"status": status})
-    return f"{data['key']} → {data['status']}"
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(f"{API_BASE}/issues/{issue_key}/transition",
+                         json={"status": status, "via": [s for s in via.split(",") if s.strip()]})
+    if r.status_code >= 400:
+        try:
+            detail = r.json().get("detail", r.text)
+        except ValueError:
+            detail = r.text
+        return f"Error ({r.status_code}): {detail}"
+    data = r.json()
+    path = data.get("path") or []
+    if not path:
+        return f"{data['key']} already {data['status']} (no change)"
+    return f"{data['key']} → " + " → ".join(path)
 
 
 @mcp.tool()
