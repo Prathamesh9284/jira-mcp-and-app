@@ -96,6 +96,7 @@ def build_create_job(inp: dict) -> dict:
         "endDate": inp.get("endDate"),
         "worklog": _worklog_from(inp) if inp.get("logTime") else None,
         "worklogs": worklogs,
+        "closeAfter": bool(inp.get("closeAfter")),
     }
 
 

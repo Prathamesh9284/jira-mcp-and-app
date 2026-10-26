@@ -21,6 +21,9 @@ async def _run_steps(steps: list[tuple[str, callable]]) -> dict:
         try:
             out = await fn()
             if isinstance(out, dict):
+                note = out.pop("note", None)
+                if note:
+                    extra.setdefault("notes", []).append(note)
                 extra.update(out)
             log.append({"label": label, "status": "ok", "msg": ""})
         except JiraError as e:
@@ -70,7 +73,7 @@ async def run_create(client, job: dict, tz_offset: str = "+0000") -> dict:
             return await client.add_worklog(state["key"], wl, tz_offset)
         steps.append((label, log_work))
 
-    will_close = bool(all_worklogs and all_worklogs[-1].get("close"))
+    will_close = bool((all_worklogs and all_worklogs[-1].get("close")) or job.get("closeAfter"))
     if will_close:
         steps.append(("Close subtask", lambda: _soft_transition(client, state["key"], CLOSED)()))
 

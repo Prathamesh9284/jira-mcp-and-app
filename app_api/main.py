@@ -1,3 +1,4 @@
+import re
 import time
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
@@ -252,6 +253,31 @@ async def subtask_types_(request: Request, project: str = cfg.project):
         return await _jira(request).list_subtask_types(project)
     except JiraError as e:
         raise HTTPException(502, e.message) from None
+
+
+def _type_key(name: str) -> str:
+    """'APP: Sub-Task', 'app task', 'App' -> 'app'; plain 'Sub-Task' -> ''."""
+    words = re.findall(r"[a-z0-9]+", name.lower())
+    return "".join(w for w in words if w not in ("sub", "task", "subtask"))
+
+
+@app.post("/issues/{issue_key}/issuetype")
+async def change_issue_type_(issue_key: str, body: dict, request: Request):
+    name = (body.get("issueType") or "").strip()
+    if not name:
+        raise HTTPException(400, "issueType is required")
+    project = body.get("project") or issue_key.split("-")[0]
+    client = _jira(request)
+    try:
+        types = await client.list_subtask_types(project) + await client.list_story_types(project)
+        match = next((t for t in types if _type_key(t["name"]) == _type_key(name)), None)
+        if not match:
+            raise HTTPException(400, f'Unknown issue type "{name}". Available: '
+                                     + ", ".join(t["name"] for t in types))
+        await client.update_issue(issue_key, {"issuetype": {"id": match["id"]}})
+    except JiraError as e:
+        raise HTTPException(502, e.message) from None
+    return {"key": issue_key, "issueType": match["name"]}
 
 
 @app.get("/story-types")

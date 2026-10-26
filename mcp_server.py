@@ -3,6 +3,7 @@
 Run: python mcp_server.py   — communicates via stdio, FastAPI must be running."""
 
 import os
+import re
 from datetime import date
 
 import httpx
@@ -38,9 +39,34 @@ async def _resolve_story_type_id(project_key: str, type_name: str) -> str:
     return types[0]["id"] if types else ""
 
 
-async def _resolve_subtask_type_id(project_key: str) -> str:
+def _type_key(name: str) -> str:
+    """'APP: Sub-Task', 'app task', 'App' -> 'app'; plain 'Sub-Task' -> ''."""
+    words = re.findall(r"[a-z0-9]+", name.lower())
+    return "".join(w for w in words if w not in ("sub", "task", "subtask"))
+
+
+async def _resolve_subtask_type(project_key: str, type_name: str = "") -> dict:
+    """Resolve a sub-task type by name (e.g. 'App task', 'FE task').
+    Raises ValueError listing the valid names when the name is empty or doesn't match."""
     types = await _get("/subtask-types", project=project_key)
-    return types[0]["id"] if types else ""
+    if not types:
+        raise ValueError(f"No sub-task types in project {project_key}.")
+    if not type_name.strip():
+        raise ValueError("Sub-task type not given — ask the user which one. Available: "
+                         + ", ".join(t["name"] for t in types))
+    for t in types:
+        if _type_key(t["name"]) == _type_key(type_name):
+            return t
+    raise ValueError(f'Unknown sub-task type "{type_name}". Available: '
+                     + ", ".join(t["name"] for t in types))
+
+
+def _steps_summary(data: dict) -> str:
+    """Failed steps and soft-transition notes from a backend job result ('' when all ok)."""
+    parts = [f"FAILED {s.get('label', '')}: {s.get('msg', 'error')}"
+             for s in data.get("steps", []) if s.get("status") != "ok"]
+    parts += [f"NOTE {n}" for n in data.get("notes", [])]
+    return "; ".join(parts)
 
 
 # ── tools ────────────────────────────────────────────────────────────────────
@@ -226,6 +252,7 @@ async def jira_create_subtask(
     end_time: str = "",
     log_date: str = "",
     close_after: bool = False,
+    issue_type: str = "",
 ) -> str:
     """Create a subtask under a story.
 
@@ -240,10 +267,18 @@ async def jira_create_subtask(
         time_spent: Optional worklog (e.g. '2h 30m').
         end_time: Worklog end time (e.g. '17:00').
         log_date: Worklog date YYYY-MM-DD (defaults to today).
-        close_after: Close the subtask after logging time.
+        close_after: Close the subtask (with or without a worklog).
+        issue_type: REQUIRED sub-task type, e.g. 'App task' or 'FE task'
+                    (jira_list_subtask_types). If the user didn't say, ask them first —
+                    an empty value creates nothing and returns the available types.
     """
     today = date.today().isoformat()
-    type_id = await _resolve_subtask_type_id(project)
+    if time_spent and not end_time:
+        return "Error: end_time (HH:MM) is required when time_spent is given — nothing created."
+    try:
+        sub_type = await _resolve_subtask_type(project, issue_type)
+    except ValueError as e:
+        return f"Error: {e} — nothing created."
     worklog = None
     if time_spent and end_time:
         worklog = {
@@ -254,7 +289,7 @@ async def jira_create_subtask(
     data = await _post("/subtask", {
         "storyKey": story_key,
         "projectKey": project,
-        "issueTypeId": type_id,
+        "issueTypeId": sub_type["id"],
         "title": title,
         "description": description or "-",
         "acceptance": acceptance or "-",
@@ -264,7 +299,10 @@ async def jira_create_subtask(
         "closeAfter": close_after,
     })
     key = data.get("subtaskKey", "?")
-    msg = f"Created {key}: {title}"
+    msg = f"Created {key} [{sub_type['name']}]: {title}"
+    problems = _steps_summary(data)
+    if problems:
+        return f"{msg} · {problems}"
     if worklog:
         msg += f" · logged {time_spent}"
     if close_after:
@@ -300,10 +338,35 @@ async def jira_log_time(
         "description": description,
         "close": close,
     })
-    failed = [s for s in data.get("steps", []) if s.get("status") != "ok"]
-    if failed:
-        return "Failed: " + "; ".join(s.get("msg", "error") for s in failed)
+    problems = _steps_summary(data)
+    if problems:
+        return f"{subtask_key}: {problems}"
     return f"Logged {time_spent} on {subtask_key}" + (" · closed" if close else "")
+
+
+@mcp.tool()
+async def jira_list_subtask_types(project: str = DEFAULT_PROJECT) -> str:
+    """List sub-task issue types in a project (e.g. App task, FE task)."""
+    data = await _get("/subtask-types", project=project)
+    return ", ".join(t["name"] for t in data) if data else "No sub-task types found."
+
+
+@mcp.tool()
+async def jira_change_issue_type(issue_key: str, issue_type: str, project: str = "") -> str:
+    """Change an existing issue's type, e.g. a sub-task from 'FE task' to 'App task'.
+
+    Args:
+        issue_key: e.g. WAR-9002.
+        issue_type: Target type name (see jira_list_subtask_types).
+        project: Project key (defaults to the key's prefix).
+    """
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.post(f"{API_BASE}/issues/{issue_key}/issuetype",
+                         json={"issueType": issue_type, "project": project or None})
+    if r.status_code >= 400:
+        return f"Error: {r.json().get('detail', r.text)}"
+    data = r.json()
+    return f"{data['key']} → type {data['issueType']}"
 
 
 @mcp.tool()
