@@ -50,7 +50,10 @@ def _apply_dates(cfg, fields: dict, req: dict) -> None:
         end_field = getattr(cfg, "end_date_field", "") or "duedate"
         fields[end_field] = req["due_date"]
     if req.get("original_estimate"):
-        fields["timetracking"] = {"originalEstimate": req["original_estimate"]}
+        fields["timetracking"] = {
+            "originalEstimate": req["original_estimate"],
+            "remainingEstimate": req["original_estimate"],
+        }
 
 
 async def create_epic(client, cfg, req: dict) -> str:

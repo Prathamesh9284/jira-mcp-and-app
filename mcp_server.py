@@ -211,22 +211,33 @@ async def jira_create_story(
     acceptance: str = "",
     start_date: str = "",
     end_date: str = "",
+    original_estimate: str = "",
 ) -> str:
     """Create a Story, Bug, or Task in Jira.
+
+    IMPORTANT: You (the agent) MUST generate description and acceptance criteria
+    yourself based on the title before calling this tool — never leave them empty
+    or as '-'. Write a concise technical description and a bullet-point acceptance
+    criteria checklist that reflects what done looks like for this issue.
 
     Args:
         title: Issue summary/title.
         issue_type: 'Story', 'Bug', or 'Task'.
         project: Jira project key (e.g. WAR).
         epic_key: Parent epic key (optional).
-        description: Issue description.
-        acceptance: Acceptance criteria (required for Bug type).
+        description: Concise description of the work — YOU must write this.
+        acceptance: Bullet-point acceptance criteria checklist — YOU must write this.
         start_date: YYYY-MM-DD (defaults to today).
         end_date: YYYY-MM-DD due date (defaults to today).
+        original_estimate: REQUIRED — time estimate e.g. '3d', '4h', '1d 2h'.
+            Always ask the user for this before calling if they haven't given it.
+            Never skip it or leave it empty.
     """
+    if not original_estimate:
+        return "Error: original_estimate is required — ask the user for a time estimate before creating the issue."
     type_id = await _resolve_story_type_id(project, issue_type)
     today = date.today().isoformat()
-    data = await _post("/story", {
+    body: dict = {
         "projectKey": project,
         "issueTypeId": type_id,
         "title": title,
@@ -235,7 +246,10 @@ async def jira_create_story(
         "epicKey": epic_key or None,
         "startDate": start_date or today,
         "endDate": end_date or today,
-    })
+    }
+    if original_estimate:
+        body["originalEstimate"] = original_estimate
+    data = await _post("/story", body)
     return f"Created {data['key']}: {title}"
 
 
@@ -253,14 +267,20 @@ async def jira_create_subtask(
     log_date: str = "",
     close_after: bool = False,
     issue_type: str = "",
+    original_estimate: str = "",
 ) -> str:
     """Create a subtask under a story.
+
+    IMPORTANT: You (the agent) MUST generate description and acceptance criteria
+    yourself based on the title before calling this tool — never leave them empty
+    or as '-'. Write a concise technical description and a bullet-point acceptance
+    criteria checklist that reflects what done looks like for this subtask.
 
     Args:
         story_key: Parent story/task key (e.g. WAR-123).
         title: Subtask summary.
-        description: What needs to be done.
-        acceptance: Acceptance criteria.
+        description: Concise description of the work — YOU must write this.
+        acceptance: Bullet-point acceptance criteria checklist — YOU must write this.
         start_date: YYYY-MM-DD.
         end_date: YYYY-MM-DD due date.
         project: Jira project key.
@@ -271,7 +291,12 @@ async def jira_create_subtask(
         issue_type: REQUIRED sub-task type, e.g. 'App task' or 'FE task'
                     (jira_list_subtask_types). If the user didn't say, ask them first —
                     an empty value creates nothing and returns the available types.
+        original_estimate: REQUIRED — time estimate e.g. '3d', '4h', '1d 2h'.
+            Always ask the user for this before calling if they haven't given it.
+            Never skip it or leave it empty.
     """
+    if not original_estimate:
+        return "Error: original_estimate is required — ask the user for a time estimate before creating the subtask."
     today = date.today().isoformat()
     if time_spent and not end_time:
         return "Error: end_time (HH:MM) is required when time_spent is given — nothing created."
@@ -286,7 +311,7 @@ async def jira_create_subtask(
             "timeSpent": time_spent,
             "endTime": end_time,
         }
-    data = await _post("/subtask", {
+    subtask_body: dict = {
         "storyKey": story_key,
         "projectKey": project,
         "issueTypeId": sub_type["id"],
@@ -297,7 +322,10 @@ async def jira_create_subtask(
         "endDate": end_date or today,
         "worklogs": [worklog] if worklog else [],
         "closeAfter": close_after,
-    })
+    }
+    if original_estimate:
+        subtask_body["originalEstimate"] = original_estimate
+    data = await _post("/subtask", subtask_body)
     key = data.get("subtaskKey", "?")
     msg = f"Created {key} [{sub_type['name']}]: {title}"
     problems = _steps_summary(data)
@@ -321,12 +349,16 @@ async def jira_log_time(
 ) -> str:
     """Log time on an existing subtask.
 
+    IMPORTANT: You (the agent) MUST always provide a meaningful description
+    of the work done — never leave it empty. Write 1-2 sentences summarising
+    what was actually done during this time block.
+
     Args:
         subtask_key: Jira issue key (e.g. WAR-8770).
         time_spent: Duration string (e.g. '2h 30m', '1h').
         end_time: End time in HH:MM (e.g. '17:00').
         log_date: YYYY-MM-DD (defaults to today).
-        description: Work description.
+        description: REQUIRED — brief summary of work done (YOU must write this).
         close: Close the subtask after logging.
     """
     today = date.today().isoformat()
@@ -349,6 +381,72 @@ async def jira_list_subtask_types(project: str = DEFAULT_PROJECT) -> str:
     """List sub-task issue types in a project (e.g. App task, FE task)."""
     data = await _get("/subtask-types", project=project)
     return ", ".join(t["name"] for t in data) if data else "No sub-task types found."
+
+
+@mcp.tool()
+async def jira_update_issue(
+    issue_key: str,
+    title: str = "",
+    description: str = "",
+    acceptance: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    original_estimate: str = "",
+) -> str:
+    """Update any fields on an existing Jira issue. Pass only the fields you want to change.
+
+    Args:
+        issue_key: e.g. WAR-9024.
+        title: New summary/title.
+        description: New description text.
+        acceptance: New acceptance criteria.
+        start_date: YYYY-MM-DD.
+        end_date: YYYY-MM-DD due date.
+        original_estimate: e.g. '21h', '3d', '1d 4h'.
+    """
+    body: dict = {}
+    if title:
+        body["title"] = title
+    if description:
+        body["description"] = description
+    if acceptance:
+        body["acceptance"] = acceptance
+    if start_date:
+        body["startDate"] = start_date
+    if end_date:
+        body["endDate"] = end_date
+    if original_estimate:
+        body["originalEstimate"] = original_estimate
+    if not body:
+        return "Nothing to update — pass at least one field."
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.patch(f"{API_BASE}/issues/{issue_key}", json=body)
+    if r.status_code >= 400:
+        return f"Error: {r.json().get('detail', r.text)}"
+    data = r.json()
+    updated = ", ".join(data.get("updated", []))
+    return f"{data['key']} updated: {updated}"
+
+
+@mcp.tool()
+async def jira_set_estimate(issue_key: str, original_estimate: str) -> str:
+    """Set the original time estimate on an existing Jira issue.
+
+    Use this when estimate was not saved during creation (Jira silently drops
+    timetracking on create if the field is not on the project's create screen —
+    a PUT/edit always works regardless of screen config).
+
+    Args:
+        issue_key: e.g. WAR-9024.
+        original_estimate: Jira duration string e.g. '21h', '3d', '1d 4h 30m'.
+    """
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.put(f"{API_BASE}/issues/{issue_key}/estimate",
+                        json={"originalEstimate": original_estimate})
+    if r.status_code >= 400:
+        return f"Error: {r.json().get('detail', r.text)}"
+    data = r.json()
+    return f"{data['key']} original estimate → {data['originalEstimate']}"
 
 
 @mcp.tool()

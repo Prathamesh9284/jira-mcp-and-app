@@ -11,7 +11,7 @@ from jira_timelog import jira_create as jc
 from jira_timelog.client import JiraClient, JiraError
 from jira_timelog.config import Config
 
-from .schemas import SubtaskCreate, StoryCreate, TimelogCreate
+from .schemas import SubtaskCreate, StoryCreate, TimelogCreate, IssueUpdate
 from jira_timelog.adf import text_to_adf
 from jira_timelog.jira_fields import apply_extra_fields
 
@@ -266,6 +266,56 @@ def _type_key(name: str) -> str:
     return "".join(w for w in words if w not in ("sub", "task", "subtask"))
 
 
+@app.patch("/issues/{issue_key}")
+async def update_issue_(issue_key: str, body: IssueUpdate, request: Request):
+    """Update any combination of fields on an existing issue."""
+    client = _jira(request)
+    fields: dict = {}
+    if body.title is not None:
+        fields["summary"] = body.title
+    if body.description is not None:
+        fields["description"] = text_to_adf(body.description)
+    if body.acceptance is not None:
+        apply_extra_fields(cfg, fields, {"acceptance": body.acceptance})
+    if body.startDate is not None:
+        start_field = cfg.field_ids.get("Start Date") or getattr(cfg, "start_date_field", "")
+        if start_field:
+            fields[start_field] = body.startDate
+    if body.endDate is not None:
+        end_field = getattr(cfg, "end_date_field", "") or "duedate"
+        fields[end_field] = body.endDate
+    if body.originalEstimate is not None:
+        fields["timetracking"] = {
+            "originalEstimate": body.originalEstimate,
+            "remainingEstimate": body.originalEstimate,
+        }
+    if not fields:
+        raise HTTPException(400, "No fields to update")
+    try:
+        await client.update_issue(issue_key, fields)
+    except JiraError as e:
+        raise HTTPException(502, e.message) from None
+    return {"key": issue_key, "updated": list(fields.keys())}
+
+
+@app.put("/issues/{issue_key}/estimate")
+async def set_estimate_(issue_key: str, body: dict, request: Request):
+    """Set (or clear) the original estimate on an existing issue.
+    body: {"originalEstimate": "21h"}  — Jira format: Xw Xd Xh Xm."""
+    estimate = (body.get("originalEstimate") or "").strip()
+    if not estimate:
+        raise HTTPException(400, "originalEstimate is required")
+    client = _jira(request)
+    try:
+        await client.update_issue(issue_key, {"timetracking": {
+            "originalEstimate": estimate,
+            "remainingEstimate": estimate,
+        }})
+    except JiraError as e:
+        raise HTTPException(502, e.message) from None
+    return {"key": issue_key, "originalEstimate": estimate}
+
+
 @app.post("/issues/{issue_key}/issuetype")
 async def change_issue_type_(issue_key: str, body: dict, request: Request):
     name = (body.get("issueType") or "").strip()
@@ -316,6 +366,11 @@ async def create_story_(body: StoryCreate, request: Request):
     if body.endDate:
         end_field = getattr(cfg, "end_date_field", "") or "duedate"
         fields[end_field] = body.endDate
+    if body.originalEstimate:
+        fields["timetracking"] = {
+            "originalEstimate": body.originalEstimate,
+            "remainingEstimate": body.originalEstimate,
+        }
     try:
         key = await client.create_issue(fields)
         return {"key": key}

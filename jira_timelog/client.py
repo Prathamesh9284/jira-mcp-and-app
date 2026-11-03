@@ -120,6 +120,11 @@ class JiraClient:
         end_field = getattr(cfg, "end_date_field", "") or "duedate"
         if job.get("endDate"):
             fields[end_field] = job["endDate"]
+        if job.get("originalEstimate"):
+            fields["timetracking"] = {
+                "originalEstimate": job["originalEstimate"],
+                "remainingEstimate": job["originalEstimate"],
+            }
         result = await self._request("POST", "/rest/api/3/issue", {"fields": fields})
         return result["key"]
 

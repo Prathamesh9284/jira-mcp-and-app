@@ -5,6 +5,7 @@ class WorklogRow(BaseModel):
     date: str
     timeSpent: str
     endTime: str
+    description: str = ""
 
 
 class SubtaskCreate(BaseModel):
@@ -23,6 +24,7 @@ class SubtaskCreate(BaseModel):
     close: bool = False
     worklogs: list[WorklogRow] = []
     closeAfter: bool = False
+    originalEstimate: str | None = None
 
 
 class StoryCreate(BaseModel):
@@ -34,6 +36,16 @@ class StoryCreate(BaseModel):
     epicKey: str | None = None
     startDate: str | None = None
     endDate: str | None = None
+    originalEstimate: str | None = None
+
+
+class IssueUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    acceptance: str | None = None
+    startDate: str | None = None
+    endDate: str | None = None
+    originalEstimate: str | None = None
 
 
 class TimelogCreate(BaseModel):
